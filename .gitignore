@@ -1,0 +1,5 @@
+# 元データ（文科省Excel・ジョイフルPDF等）は再配布を避けるためリポジトリに含めない
+raw/
+chains/data/
+__pycache__/
+*.pyc

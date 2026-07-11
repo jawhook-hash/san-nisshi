@@ -114,8 +114,6 @@
   .menu-item:last-child { border-bottom: 0; }
   .menu-item .info { flex: 1; min-width: 0; }
 
-  /* --- 外食 --- */
-  .chain-note { font-size: .8rem; color: var(--sub); margin: 4px 0 8px; line-height: 1.5; }
   .unknown-note { font-size: .85rem; color: var(--warn); margin-top: 10px; line-height: 1.5; }
 
   /* --- 栄養成分表示の読み取り --- */
@@ -214,14 +212,6 @@
   <!-- ============ 検索 ============ -->
   <section class="screen" id="scr-search">
     <div class="card">
-      <div class="chips" id="modeChips" style="margin:0 0 10px">
-        <button class="chip on" data-mode="food">🥗 食品</button>
-        <button class="chip" data-mode="chain">🍽 外食</button>
-      </div>
-      <div id="chainBar" style="display:none">
-        <div class="chips" id="chainChips" style="margin:0 0 4px"></div>
-        <div class="chain-note" id="chainNote"></div>
-      </div>
       <input type="search" id="q" placeholder="食品名で検索（例: 食パン、みそ）" autocomplete="off">
       <div class="hits" id="hits"></div>
     </div>
@@ -236,31 +226,10 @@
       <div class="preview" id="preview"></div>
       <button class="btn-primary" id="btnAdd">今日の記録に追加</button>
     </div>
-    <div class="card amount-panel" id="chainPanel" style="display:none">
-      <div class="selected-name" id="chainSelName"></div>
-      <div id="chainBasis"></div>
-      <div>食べた量（人前）:</div>
-      <div class="chips" id="chainQtyChips"></div>
-      <div class="g-row">
-        <input type="number" id="qtyInput" inputmode="decimal" step="0.5" min="0.5" max="10" value="1">
-        <span class="unit">人前</span>
-      </div>
-      <div class="preview" id="chainPreview"></div>
-      <button class="btn-primary" id="btnChainAdd">今日の記録に追加</button>
-    </div>
     <div class="card">
-      <button class="btn-secondary" style="width:100%" id="btnScanToggle">📷 パッケージの栄養成分表示を登録（スキャン／手入力）</button>
+      <button class="btn-secondary" style="width:100%" id="btnScanToggle">⌨ パッケージの栄養成分表示を手入力で登録</button>
       <div id="scanPanel" style="display:none; margin-top:14px">
-        <button class="btn-primary" id="btnManual">⌨ 数値を手で入力する</button>
-        <p class="note-help" style="margin:14px 0 6px">
-          カメラでの読み取りに対応した機種（iPhone XS以降）では:<br>
-          ① 下の欄を長押しして「<b>テキストをスキャン</b>」を選ぶ<br>
-          ② パッケージの<b>栄養成分表示</b>にカメラを向ける<br>
-          ③ 文字が入ったら「数値を読み取る」を押す
-        </p>
-        <textarea id="scanText" rows="4" placeholder="ここに栄養成分表示の文字を入れてください"></textarea>
-        <button class="btn-secondary" id="btnParse" style="margin-top:10px; width:100%">数値を読み取る</button>
-        <div id="parseResult" style="display:none; margin-top:14px">
+        <div id="parseResult">
           <div id="parseBasis"></div>
           <div class="parse-grid">
             <div class="wide"><label>名前（商品名など）</label><input type="text" id="pName" placeholder="例: カップみそ汁"></div>
@@ -430,19 +399,6 @@ async function loadFoods() {
   FOODS = db.foods.map(f => [...f, normalize(f[1]) + "|" + normalize(f[7] || "")]);
 }
 
-/* 外食チェーンDB: items = [name, cat, kcal, prot, salt, basis, 検索用文字列] */
-let CHAINS = [];
-const CH_SEARCH_IDX = 6;
-
-async function loadChains() {
-  const res = await fetch("chains.json");
-  const db = await res.json();
-  CHAINS = db.chains.map(c => ({
-    ...c,
-    items: c.items.map(it => [...it, normalize(it[0])]),
-  }));
-}
-
 /* ================= 画面切替 ================= */
 document.querySelectorAll("nav button").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -573,13 +529,9 @@ function addEntry(entry) {
 
 /* ================= 検索画面 ================= */
 let selectedFood = null;
-let searchMode = "food";     // "food" | "chain"
-let selectedChain = null;
-let selectedChainItem = null;
 const GRAM_PRESETS = [50, 80, 100, 150, 200];
 
 $("q").addEventListener("input", () => {
-  if (searchMode === "chain") { renderChainHits(); return; }
   const nq = normalize($("q").value);
   const box = $("hits");
   if (nq.length < 1) { box.innerHTML = ""; return; }
@@ -599,105 +551,6 @@ $("q").addEventListener("input", () => {
       </div>`).join("");
   box.querySelectorAll("[data-hit]").forEach(el =>
     el.addEventListener("click", () => selectFood(hits[+el.dataset.hit])));
-});
-
-/* --- 食品/外食モード切替 --- */
-$("modeChips").querySelectorAll(".chip").forEach(c =>
-  c.addEventListener("click", () => {
-    searchMode = c.dataset.mode;
-    $("modeChips").querySelectorAll(".chip").forEach(x =>
-      x.classList.toggle("on", x === c));
-    const isChain = searchMode === "chain";
-    $("chainBar").style.display = isChain ? "" : "none";
-    $("amountPanel").style.display = "none";
-    $("chainPanel").style.display = "none";
-    $("q").value = ""; $("hits").innerHTML = "";
-    $("q").placeholder = isChain ? "メニュー名で検索（空欄で一覧表示）" : "食品名で検索（例: 食パン、みそ）";
-    if (isChain) {
-      if (!selectedChain && CHAINS.length) selectedChain = CHAINS[0];
-      renderChainBar(); renderChainHits();
-    }
-  }));
-
-function renderChainBar() {
-  $("chainChips").innerHTML = CHAINS.map((c, i) =>
-    `<button class="chip${c === selectedChain ? " on" : ""}" data-chain="${i}">${esc(c.name)}</button>`).join("");
-  $("chainChips").querySelectorAll(".chip").forEach(b =>
-    b.addEventListener("click", () => {
-      selectedChain = CHAINS[+b.dataset.chain];
-      $("chainPanel").style.display = "none";
-      renderChainBar(); renderChainHits();
-    }));
-  $("chainNote").textContent = selectedChain ? selectedChain.note : "";
-}
-
-function renderChainHits() {
-  const box = $("hits");
-  if (!selectedChain) { box.innerHTML = `<div class="empty">データ読み込み中です</div>`; return; }
-  const nq = normalize($("q").value);
-  const hits = [];
-  for (const it of selectedChain.items) {
-    if (!nq || it[CH_SEARCH_IDX].includes(nq)) {
-      hits.push(it);
-      if (hits.length >= 30) break;
-    }
-  }
-  box.innerHTML = hits.length === 0
-    ? `<div class="empty">見つかりません</div>`
-    : hits.map((it, i) => `
-      <div class="hit" data-chit="${i}">
-        <div class="name">${esc(it[0])}</div>
-        <div class="detail">${it[1] ? esc(it[1]) + " ・ " : ""}${fmt(it[2],0)}kcal ・ 塩 ${it[4] == null ? "不明" : fmt(it[4]) + "g"}${it[5] ? " ・ " + esc(it[5]) : ""}</div>
-      </div>`).join("");
-  box.querySelectorAll("[data-chit]").forEach(el =>
-    el.addEventListener("click", () => selectChainItem(hits[+el.dataset.chit])));
-}
-
-const QTY_PRESETS = [0.5, 1, 1.5, 2];
-
-function selectChainItem(it) {
-  selectedChainItem = it;
-  $("chainSelName").textContent = `${selectedChain.name}　${it[0]}`;
-  $("chainBasis").innerHTML = it[5] ? `<span class="basis-tag">1人前 = ${esc(it[5])}</span>` : "";
-  $("chainQtyChips").innerHTML = QTY_PRESETS.map(q =>
-    `<button class="chip${q === 1 ? " on" : ""}" data-q="${q}">${q}人前</button>`).join("");
-  $("chainQtyChips").querySelectorAll(".chip").forEach(c =>
-    c.addEventListener("click", () => {
-      $("qtyInput").value = c.dataset.q;
-      updateChainUI();
-    }));
-  $("qtyInput").value = 1;
-  $("chainPanel").style.display = "";
-  updateChainUI();
-  $("chainPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
-}
-
-function calcChainEntry(it, qty) {
-  const mul = v => v == null ? null : Math.round(v * qty * 100) / 100;
-  const name = `${selectedChain.name}　${it[0]}` + (qty !== 1 ? ` ×${qty}` : "");
-  return { name, g: null, kcal: mul(it[2]), prot: mul(it[3]), salt: mul(it[4]), k: null, p: null };
-}
-
-function updateChainUI() {
-  if (!selectedChainItem) return;
-  const qty = parseFloat($("qtyInput").value) || 0;
-  $("chainQtyChips").querySelectorAll(".chip").forEach(c =>
-    c.classList.toggle("on", +c.dataset.q === qty));
-  const e = calcChainEntry(selectedChainItem, qty);
-  $("chainPreview").innerHTML =
-    `この量で: 塩 <b>${e.salt == null ? "不明" : fmt(e.salt) + "g"}</b> ・ たんぱく <b>${e.prot == null ? "不明" : fmt(e.prot) + "g"}</b> ・ <b>${fmt(e.kcal,0)}kcal</b>` +
-    (e.salt == null ? `<br>⚠ 食塩が不明のため、食塩の合計には含まれません` : "");
-}
-$("qtyInput").addEventListener("input", updateChainUI);
-
-$("btnChainAdd").addEventListener("click", () => {
-  if (!selectedChainItem) return;
-  const qty = parseFloat($("qtyInput").value);
-  if (!qty || qty <= 0) { toast("量を入力してください"); return; }
-  addEntry(calcChainEntry(selectedChainItem, qty));
-  toast("記録しました ✓");
-  $("chainPanel").style.display = "none";
-  selectedChainItem = null;
 });
 
 function selectFood(f) {
@@ -746,80 +599,20 @@ $("btnAdd").addEventListener("click", () => {
   selectedFood = null;
 });
 
-/* ================= 栄養成分表示の読み取り ================= */
-// 全角数字・単位の表記ゆれを整えた解析用テキストを作る
-function cleanLabelText(raw) {
-  return String(raw)
-    .replace(/[０-９ａ-ｚＡ-Ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/[．]/g, ".")
-    .replace(/[，,]/g, "")
-    .replace(/㎉/g, "kcal")
-    .replace(/㎎/g, "mg");
-}
-
-// 栄養成分表示テキストから数値を抽出
-function parseLabel(raw) {
-  const t = cleanLabelText(raw);
-  const grab = (labels, units) => {
-    const re = new RegExp(`(?:${labels})[^0-9]{0,15}([0-9]+(?:\\.[0-9]+)?)\\s*(?:${units})`, "i");
-    const m = t.match(re);
-    return m ? parseFloat(m[1]) : null;
-  };
-  const kcal = grab("熱量|エネルギー|カロリー", "kcal");
-  const prot = grab("たんぱく質|タンパク質|蛋白質|たん白質", "g");
-  let salt = grab("食塩相当量|食塩", "g");
-  if (salt == null) {  // ナトリウム表記のみの場合は換算（Na mg × 2.54 ÷ 1000）
-    const naMg = grab("ナトリウム", "mg");
-    if (naMg != null) salt = Math.round(naMg * 2.54 / 10) / 100;
-    else {
-      const naG = grab("ナトリウム", "g");
-      if (naG != null) salt = Math.round(naG * 2540) / 1000;
-    }
-  }
-  const k = grab("カリウム", "mg");
-  const p = grab("リン", "mg");
-  const bm = t.match(/(100\s*(?:g|ml)|1\s*(?:袋|食|本|枚|個|包|杯|人前|箱|皿|切れ|缶|カップ|回分)(?:分)?\s*(?:[（(][^）)]{0,15}[）)])?)\s*(?:当た?り|あたり)/);
-  return { kcal, prot, salt, k, p, basis: bm ? bm[1].replace(/\s/g, "") : null };
-}
-
+/* ================= 栄養成分表示の手入力 ================= */
 $("btnScanToggle").addEventListener("click", () => {
   const p = $("scanPanel");
-  p.style.display = p.style.display === "none" ? "" : "none";
-});
-
-// 手入力: スキャンを使わず空のフォームを開く（スキャン非対応機種向け）
-$("btnManual").addEventListener("click", () => {
-  $("parseBasis").innerHTML =
-    `<span class="basis-tag">パッケージの表示を見ながら入力してください（わかる項目だけでOK）</span>`;
-  $("pName").value = "";
-  $("pKcal").value = ""; $("pProt").value = ""; $("pSalt").value = "";
-  $("pK").value = ""; $("pP").value = "";
-  $("pBase").value = 100; $("pEat").value = 100;
-  updateScanPreview();
-  $("parseResult").style.display = "";
-  $("parseResult").scrollIntoView({ behavior: "smooth", block: "nearest" });
-});
-
-$("btnParse").addEventListener("click", () => {
-  const raw = $("scanText").value;
-  if (!raw.trim()) { toast("先に文字を入れてください"); return; }
-  const r = parseLabel(raw);
-  if (r.kcal == null && r.prot == null && r.salt == null) {
-    toast("数値を読み取れませんでした。もう一度スキャンしてください");
-    return;
+  const opening = p.style.display === "none";
+  if (opening) {
+    $("parseBasis").innerHTML =
+      `<span class="basis-tag">パッケージの表示を見ながら入力してください（わかる項目だけでOK）</span>`;
+    $("pName").value = "";
+    $("pKcal").value = ""; $("pProt").value = ""; $("pSalt").value = "";
+    $("pK").value = ""; $("pP").value = "";
+    $("pBase").value = 100; $("pEat").value = 100;
+    updateScanPreview();
   }
-  $("parseBasis").innerHTML = r.basis
-    ? `<span class="basis-tag">表示の基準量: ${esc(r.basis)}当たり</span>`
-    : `<span class="basis-tag">基準量を読み取れませんでした。下の「表示の基準量」を確認してください</span>`;
-  $("pKcal").value = r.kcal ?? ""; $("pProt").value = r.prot ?? "";
-  $("pSalt").value = r.salt ?? ""; $("pK").value = r.k ?? ""; $("pP").value = r.p ?? "";
-  // 基準量にg数が含まれていれば（例: 1袋(85g)・100g）自動セット。食べた量も同じ値に
-  const bg = r.basis ? r.basis.match(/([\d.]+)\s*g/i) : null;
-  const baseG = bg ? parseFloat(bg[1]) : 100;
-  $("pBase").value = baseG; $("pEat").value = baseG;
-  updateScanPreview();
-  $("parseResult").style.display = "";
-  $("parseResult").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  p.style.display = opening ? "" : "none";
 });
 
 function scanEntry() {
@@ -846,8 +639,7 @@ function updateScanPreview() {
   $(id).addEventListener("input", updateScanPreview));
 
 function resetScanPanel() {
-  $("scanText").value = ""; $("pName").value = "";
-  $("parseResult").style.display = "none";
+  $("pName").value = "";
   $("scanPanel").style.display = "none";
 }
 
@@ -1054,11 +846,6 @@ $("btnSaveSettings").addEventListener("click", () => {
     await loadFoods();
   } catch (e) {
     $("hits").innerHTML = `<div class="empty">食品データの読み込みに失敗しました。<br>通信環境を確認して再読み込みしてください。</div>`;
-  }
-  try {
-    await loadChains();
-  } catch (e) {
-    CHAINS = [];
   }
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});

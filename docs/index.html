@@ -161,6 +161,10 @@
   nav button .icon { font-size: 1.4rem; }
   nav button.active { color: var(--accent); font-weight: 700; }
 
+  /* --- まとめ登録 --- */
+  .card h2 .btn-small { float: right; margin-top: -4px; }
+  .merge-cb { width: 26px; height: 26px; flex-shrink: 0; accent-color: var(--accent); }
+
   /* --- トースト --- */
   #toast {
     position: fixed; left: 50%; bottom: calc(var(--tabbar-h) + 24px);
@@ -199,8 +203,11 @@
       <div class="minor-row" id="minor"></div>
     </div>
     <div class="card">
-      <h2>今日の記録</h2>
+      <h2>今日の記録 <button class="btn-small" id="btnMergeMode">まとめる</button></h2>
       <div id="todayList"></div>
+      <div id="mergeActions" style="display:none; margin-top:12px">
+        <button class="btn-primary" id="btnMergeSave">⭐ 選んだ食事を1つにまとめて登録</button>
+      </div>
     </div>
   </section>
 
@@ -496,13 +503,18 @@ function renderToday() {
     ? `<div class="empty">まだ記録がありません。<br>下の「検索」から食品を追加してください。</div>`
     : entries.map((e, i) => `
       <div class="entry">
+        ${mergeMode ? `<input type="checkbox" class="merge-cb" data-cb="${i}">` : ""}
         <div class="info">
           <div class="name">${esc(e.name)}</div>
           <div class="detail">${e.g ? fmt(e.g,0) + "g ・ " : ""}塩 ${e.salt == null ? "不明" : fmt(e.salt) + "g"} ・ たんぱく ${e.prot == null ? "不明" : fmt(e.prot) + "g"} ・ ${fmt(e.kcal,0)}kcal</div>
         </div>
-        <button class="btn-star" data-star="${i}" title="マイメニューに登録">☆</button>
-        <button class="btn-del" data-del="${i}" title="削除">✕</button>
+        ${mergeMode ? "" : `<button class="btn-star" data-star="${i}" title="マイメニューに登録">☆</button>
+        <button class="btn-del" data-del="${i}" title="削除">✕</button>`}
       </div>`).join("");
+
+  $("btnMergeMode").textContent = mergeMode ? "やめる" : "まとめる";
+  $("btnMergeMode").style.display = entries.length >= 2 || mergeMode ? "" : "none";
+  $("mergeActions").style.display = mergeMode ? "" : "none";
 
   $("todayList").querySelectorAll("[data-del]").forEach(b =>
     b.addEventListener("click", () => {
@@ -523,6 +535,33 @@ function renderToday() {
       saveMenu(); toast("マイメニューに登録しました ⭐");
     }));
 }
+
+/* --- 複数の記録を合算して1つのマイメニューにする --- */
+let mergeMode = false;
+
+$("btnMergeMode").addEventListener("click", () => {
+  mergeMode = !mergeMode;
+  renderToday();
+});
+
+$("btnMergeSave").addEventListener("click", () => {
+  const entries = log[todayKey()] || [];
+  const picked = [...$("todayList").querySelectorAll(".merge-cb:checked")]
+    .map(cb => entries[+cb.dataset.cb]).filter(Boolean);
+  if (picked.length < 2) { toast("2つ以上選んでください"); return; }
+  const name = prompt("まとめた食事の名前（例: いつもの朝食）", "");
+  if (!name) return;
+  // 合算。1つでも不明(null)の栄養素があれば合計も不明にする（過小評価を防ぐ）
+  const sum = key => picked.some(e => e[key] == null)
+    ? null
+    : Math.round(picked.reduce((s, e) => s + e[key], 0) * 100) / 100;
+  myMenu.push({ name, g: null, kcal: sum("kcal"), prot: sum("prot"),
+                salt: sum("salt"), k: sum("k"), p: sum("p") });
+  saveMenu();
+  mergeMode = false;
+  renderToday();
+  toast(`「${name}」をマイメニューに登録しました ⭐`);
+});
 
 function addEntry(entry) {
   const key = todayKey();

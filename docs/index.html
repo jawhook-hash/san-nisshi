@@ -264,13 +264,15 @@
           <div id="parseBasis"></div>
           <div class="parse-grid">
             <div class="wide"><label>名前（商品名など）</label><input type="text" id="pName" placeholder="例: カップみそ汁"></div>
+            <div class="wide"><label>表示の基準量（◯g当たりのg数）</label><input type="number" id="pBase" inputmode="decimal" value="100"></div>
             <div><label>エネルギー（kcal）</label><input type="number" id="pKcal" inputmode="decimal"></div>
             <div><label>たんぱく質（g）</label><input type="number" id="pProt" inputmode="decimal" step="0.1"></div>
             <div><label>食塩相当量（g）</label><input type="number" id="pSalt" inputmode="decimal" step="0.1"></div>
             <div><label>カリウム（mg）</label><input type="number" id="pK" inputmode="decimal"></div>
             <div><label>リン（mg）</label><input type="number" id="pP" inputmode="decimal"></div>
-            <div><label>食べた量（個・食分）</label><input type="number" id="pServ" inputmode="decimal" step="0.5" value="1"></div>
+            <div><label>食べた量（g）</label><input type="number" id="pEat" inputmode="decimal" value="100"></div>
           </div>
+          <div class="preview" id="scanPreview"></div>
           <div class="btn-row">
             <button class="btn-primary" id="btnScanAdd">記録に追加</button>
             <button class="btn-secondary" id="btnScanMenu">⭐ マイメニューに登録</button>
@@ -792,7 +794,8 @@ $("btnManual").addEventListener("click", () => {
   $("pName").value = "";
   $("pKcal").value = ""; $("pProt").value = ""; $("pSalt").value = "";
   $("pK").value = ""; $("pP").value = "";
-  $("pServ").value = 1;
+  $("pBase").value = 100; $("pEat").value = 100;
+  updateScanPreview();
   $("parseResult").style.display = "";
   $("parseResult").scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
@@ -807,23 +810,40 @@ $("btnParse").addEventListener("click", () => {
   }
   $("parseBasis").innerHTML = r.basis
     ? `<span class="basis-tag">表示の基準量: ${esc(r.basis)}当たり</span>`
-    : `<span class="basis-tag">基準量は読み取れませんでした（表示の値をそのまま使います）</span>`;
+    : `<span class="basis-tag">基準量を読み取れませんでした。下の「表示の基準量」を確認してください</span>`;
   $("pKcal").value = r.kcal ?? ""; $("pProt").value = r.prot ?? "";
   $("pSalt").value = r.salt ?? ""; $("pK").value = r.k ?? ""; $("pP").value = r.p ?? "";
-  $("pServ").value = 1;
+  // 基準量にg数が含まれていれば（例: 1袋(85g)・100g）自動セット。食べた量も同じ値に
+  const bg = r.basis ? r.basis.match(/([\d.]+)\s*g/i) : null;
+  const baseG = bg ? parseFloat(bg[1]) : 100;
+  $("pBase").value = baseG; $("pEat").value = baseG;
+  updateScanPreview();
   $("parseResult").style.display = "";
   $("parseResult").scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
 function scanEntry() {
   const num = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
-  const serv = num("pServ") ?? 1;
-  const mul = v => v == null ? null : Math.round(v * serv * 100) / 100;
+  const base = num("pBase");
+  const eat = num("pEat");
+  // 表示の基準量Nグラムあたりの値 × (食べた量 ÷ N)
+  const factor = (base > 0 && eat != null) ? eat / base : 1;
+  const mul = v => v == null ? null : Math.round(v * factor * 100) / 100;
   const name = $("pName").value.trim() || "パッケージ食品";
-  return { name: serv === 1 ? name : `${name} ×${serv}`, g: null,
+  return { name, g: eat,
            kcal: mul(num("pKcal")), prot: mul(num("pProt")), salt: mul(num("pSalt")),
            k: mul(num("pK")), p: mul(num("pP")) };
 }
+
+function updateScanPreview() {
+  const e = scanEntry();
+  $("scanPreview").innerHTML = (e.kcal == null && e.prot == null && e.salt == null)
+    ? ""
+    : `食べた量に換算: 塩 <b>${e.salt == null ? "不明" : fmt(e.salt) + "g"}</b> ・ ` +
+      `たんぱく <b>${e.prot == null ? "不明" : fmt(e.prot) + "g"}</b> ・ <b>${fmt(e.kcal,0)}kcal</b>`;
+}
+["pKcal", "pProt", "pSalt", "pK", "pP", "pBase", "pEat"].forEach(id =>
+  $(id).addEventListener("input", updateScanPreview));
 
 function resetScanPanel() {
   $("scanText").value = ""; $("pName").value = "";
@@ -845,7 +865,7 @@ $("btnScanAdd").addEventListener("click", () => {
 $("btnScanMenu").addEventListener("click", () => {
   const e = scanEntry();
   if (!$("pName").value.trim()) { toast("マイメニュー登録には名前を入れてください"); return; }
-  myMenu.push({ name: e.name, g: null, kcal: e.kcal, prot: e.prot, salt: e.salt, k: e.k, p: e.p });
+  myMenu.push({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot, salt: e.salt, k: e.k, p: e.p });
   saveMenu();
   toast("マイメニューに登録しました ⭐");
   resetScanPanel();

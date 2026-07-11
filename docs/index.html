@@ -242,15 +242,17 @@
       <button class="btn-primary" id="btnChainAdd">今日の記録に追加</button>
     </div>
     <div class="card">
-      <button class="btn-secondary" style="width:100%" id="btnScanToggle">📷 パッケージの栄養成分表示から読み取り</button>
+      <button class="btn-secondary" style="width:100%" id="btnScanToggle">📷 パッケージの栄養成分表示を登録（スキャン／手入力）</button>
       <div id="scanPanel" style="display:none; margin-top:14px">
-        <p class="note-help">
+        <button class="btn-primary" id="btnManual">⌨ 数値を手で入力する</button>
+        <p class="note-help" style="margin:14px 0 6px">
+          カメラでの読み取りに対応した機種（iPhone XS以降）では:<br>
           ① 下の欄を長押しして「<b>テキストをスキャン</b>」を選ぶ<br>
           ② パッケージの<b>栄養成分表示</b>にカメラを向ける<br>
           ③ 文字が入ったら「数値を読み取る」を押す
         </p>
-        <textarea id="scanText" rows="5" placeholder="ここに栄養成分表示の文字を入れてください"></textarea>
-        <button class="btn-primary" id="btnParse" style="margin-top:10px">数値を読み取る</button>
+        <textarea id="scanText" rows="4" placeholder="ここに栄養成分表示の文字を入れてください"></textarea>
+        <button class="btn-secondary" id="btnParse" style="margin-top:10px; width:100%">数値を読み取る</button>
         <div id="parseResult" style="display:none; margin-top:14px">
           <div id="parseBasis"></div>
           <div class="parse-grid">
@@ -744,6 +746,18 @@ $("btnScanToggle").addEventListener("click", () => {
   p.style.display = p.style.display === "none" ? "" : "none";
 });
 
+// 手入力: スキャンを使わず空のフォームを開く（スキャン非対応機種向け）
+$("btnManual").addEventListener("click", () => {
+  $("parseBasis").innerHTML =
+    `<span class="basis-tag">パッケージの表示を見ながら入力してください（わかる項目だけでOK）</span>`;
+  $("pName").value = "";
+  $("pKcal").value = ""; $("pProt").value = ""; $("pSalt").value = "";
+  $("pK").value = ""; $("pP").value = "";
+  $("pServ").value = 1;
+  $("parseResult").style.display = "";
+  $("parseResult").scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+
 $("btnParse").addEventListener("click", () => {
   const raw = $("scanText").value;
   if (!raw.trim()) { toast("先に文字を入れてください"); return; }
@@ -779,7 +793,12 @@ function resetScanPanel() {
 }
 
 $("btnScanAdd").addEventListener("click", () => {
-  addEntry(scanEntry());
+  const e = scanEntry();
+  if (e.kcal == null && e.prot == null && e.salt == null) {
+    toast("エネルギー・たんぱく質・食塩のどれかを入力してください");
+    return;
+  }
+  addEntry(e);
   toast("記録しました ✓");
   resetScanPanel();
 });

@@ -65,11 +65,17 @@
   .minor-row { display: flex; gap: 20px; font-size: .9rem; color: var(--sub); }
 
   /* --- 記録リスト --- */
-  .entry { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .entry { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); background: var(--card); }
   .entry:last-child { border-bottom: 0; }
   .entry .info { flex: 1; min-width: 0; }
   .entry .name { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .entry .detail { font-size: .8rem; color: var(--sub); margin-top: 2px; }
+  .drag-handle {
+    width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem; color: var(--sub); touch-action: none; cursor: grab;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
+  .entry.dragging { position: relative; z-index: 10; border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
   .entry button { flex-shrink: 0; }
   .empty { color: var(--sub); text-align: center; padding: 18px 0; font-size: .95rem; }
 
@@ -474,7 +480,9 @@ function renderToday() {
     ? `<div class="empty">まだ記録がありません。<br>下の「検索」から食品を追加してください。</div>`
     : entries.map((e, i) => `
       <div class="entry">
-        ${mergeMode ? `<input type="checkbox" class="merge-cb" data-cb="${i}">` : ""}
+        ${mergeMode
+          ? `<input type="checkbox" class="merge-cb" data-cb="${i}">`
+          : `<span class="drag-handle" data-idx="${i}">⠿</span>`}
         <div class="info">
           <div class="name">${esc(e.name)}</div>
           <div class="detail">${e.g ? fmt(e.g,0) + "g ・ " : ""}塩 ${e.salt == null ? "不明" : fmt(e.salt) + "g"} ・ たんぱく ${e.prot == null ? "不明" : fmt(e.prot) + "g"} ・ ${fmt(e.kcal,0)}kcal</div>
@@ -505,6 +513,85 @@ function renderToday() {
       myMenu.push({ name, g: e.g, kcal: e.kcal, prot: e.prot, fat: e.fat, carb: e.carb, salt: e.salt });
       saveMenu(); toast("マイメニューに登録しました ⭐");
     }));
+
+  attachDragHandlers();
+}
+
+/* --- 今日の記録をドラッグで並べ替え --- */
+let dragState = null;
+
+function attachDragHandlers() {
+  $("todayList").querySelectorAll(".drag-handle").forEach(handle =>
+    handle.addEventListener("pointerdown", onDragStart));
+}
+
+function onDragStart(e) {
+  const row = e.currentTarget.closest(".entry");
+  const rows = [...$("todayList").querySelectorAll(".entry")];
+  const startIndex = rows.indexOf(row);
+  const rects = rows.map(r => r.getBoundingClientRect());
+  let offset = 0;
+  const offsets = rects.map(r => { const o = offset; offset += r.height; return o; });
+
+  dragState = {
+    row, rows, startIndex,
+    order: rows.map((_, i) => i),   // order[表示スロット] = 元のindex
+    heights: rects.map(r => r.height),
+    offsets,
+    startY: e.clientY,
+  };
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 取得失敗してもdocument側の監視で継続できる */ }
+  row.classList.add("dragging");
+  rows.forEach(r => { if (r !== row) r.style.transition = "transform 150ms"; });
+  document.addEventListener("pointermove", onDragMove);
+  document.addEventListener("pointerup", onDragEnd);
+  document.addEventListener("pointercancel", onDragEnd);
+}
+
+function onDragMove(e) {
+  if (!dragState) return;
+  const { row, rows, startIndex, order, heights, offsets, startY } = dragState;
+  const dy = e.clientY - startY;
+  row.style.transform = `translateY(${dy}px)`;
+
+  const draggedCenter = offsets[startIndex] + heights[startIndex] / 2 + dy;
+  let cum = 0, slot = 0;
+  for (; slot < order.length - 1; slot++) {
+    cum += heights[order[slot]];
+    if (draggedCenter < cum) break;
+  }
+
+  const curPos = order.indexOf(startIndex);
+  if (slot !== curPos) {
+    order.splice(curPos, 1);
+    order.splice(slot, 0, startIndex);
+    let running = 0;
+    order.forEach(idx => {
+      if (idx !== startIndex) rows[idx].style.transform = `translateY(${running - offsets[idx]}px)`;
+      running += heights[idx];
+    });
+  }
+}
+
+function onDragEnd() {
+  if (!dragState) return;
+  document.removeEventListener("pointermove", onDragMove);
+  document.removeEventListener("pointerup", onDragEnd);
+  document.removeEventListener("pointercancel", onDragEnd);
+
+  const { row, rows, order, startIndex } = dragState;
+  row.classList.remove("dragging");
+  row.style.transform = ""; row.style.transition = "";
+  rows.forEach(r => { r.style.transform = ""; r.style.transition = ""; });
+
+  const entries = log[todayKey()] || [];
+  const moved = order.indexOf(startIndex) !== startIndex;
+  if (moved) {
+    log[todayKey()] = order.map(i => entries[i]);
+    saveLog();
+  }
+  dragState = null;
+  renderToday();
 }
 
 /* --- 複数の記録を合算して1つのマイメニューにする --- */

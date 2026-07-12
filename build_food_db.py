@@ -2,8 +2,8 @@
 """日本食品標準成分表（八訂）増補2023年 Excel → アプリ用 foods.json 変換
 
 入力: raw/seibunhyo_honhyo.xlsx（文科省「第2章 本表データ」）
-出力: app/foods.json
-  形式: {"source": "...", "foods": [[食品番号, 食品名, kcal, たんぱく質g, 食塩g, カリウムmg, リンmg, 読み仮名], ...]}
+出力: docs/foods.json
+  形式: {"source": "...", "foods": [[食品番号, 食品名, kcal, たんぱく質g, 脂質g, 炭水化物g, 食塩g, 読み仮名], ...]}
   数値は可食部100gあたり。未測定(-)は null、微量(Tr)・推定値(かっこ)は数値化。
   読み仮名は pykakasi による自動生成（ひらがな検索用）。
 """
@@ -19,8 +19,8 @@ OUT = BASE / "docs" / "foods.json"
 
 SHEET = "表全体"
 DATA_START_ROW = 13
-# 列位置（1始まり）: 食品番号, 食品名, ENERC_KCAL, PROT-, K, P, NACL_EQ
-COL_CODE, COL_NAME, COL_KCAL, COL_PROT, COL_K, COL_P, COL_NACL = 2, 4, 7, 10, 25, 28, 61
+# 列位置（1始まり）: 食品番号, 食品名, ENERC_KCAL, PROT-, FAT-（脂質）, CHOCDF-（炭水化物）, NACL_EQ
+COL_CODE, COL_NAME, COL_KCAL, COL_PROT, COL_FAT, COL_CARB, COL_NACL = 2, 4, 7, 10, 13, 21, 61
 
 
 def parse_value(v):
@@ -67,9 +67,9 @@ def main():
             cname,
             parse_value(row[COL_KCAL - 1]),
             parse_value(row[COL_PROT - 1]),
+            parse_value(row[COL_FAT - 1]),
+            parse_value(row[COL_CARB - 1]),
             parse_value(row[COL_NACL - 1]),
-            parse_value(row[COL_K - 1]),
-            parse_value(row[COL_P - 1]),
             to_yomi(cname),
         ])
 
@@ -77,7 +77,7 @@ def main():
     db = {
         "source": "日本食品標準成分表（八訂）増補2023年（文部科学省）",
         "unit": "per100g",
-        "columns": ["code", "name", "kcal", "protein_g", "salt_g", "potassium_mg", "phosphorus_mg", "yomi"],
+        "columns": ["code", "name", "kcal", "protein_g", "fat_g", "carb_g", "salt_g", "yomi"],
         "foods": foods,
     }
     OUT.write_text(json.dumps(db, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

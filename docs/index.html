@@ -236,9 +236,9 @@
             <div class="wide"><label>表示の基準量（◯g当たりのg数）</label><input type="number" id="pBase" inputmode="decimal" value="100"></div>
             <div><label>エネルギー（kcal）</label><input type="number" id="pKcal" inputmode="decimal"></div>
             <div><label>たんぱく質（g）</label><input type="number" id="pProt" inputmode="decimal" step="0.1"></div>
+            <div><label>脂質（g）</label><input type="number" id="pFat" inputmode="decimal" step="0.1"></div>
+            <div><label>炭水化物（g）</label><input type="number" id="pCarb" inputmode="decimal" step="0.1"></div>
             <div><label>食塩相当量（g）</label><input type="number" id="pSalt" inputmode="decimal" step="0.1"></div>
-            <div><label>カリウム（mg）</label><input type="number" id="pK" inputmode="decimal"></div>
-            <div><label>リン（mg）</label><input type="number" id="pP" inputmode="decimal"></div>
             <div><label>食べた量（g）</label><input type="number" id="pEat" inputmode="decimal" value="100"></div>
           </div>
           <div class="preview" id="scanPreview"></div>
@@ -260,9 +260,9 @@
         <div class="wide"><label>名前</label><input type="text" id="mName"></div>
         <div><label>エネルギー（kcal）</label><input type="number" id="mKcal" inputmode="decimal"></div>
         <div><label>たんぱく質（g）</label><input type="number" id="mProt" inputmode="decimal" step="0.1"></div>
+        <div><label>脂質（g）</label><input type="number" id="mFat" inputmode="decimal" step="0.1"></div>
+        <div><label>炭水化物（g）</label><input type="number" id="mCarb" inputmode="decimal" step="0.1"></div>
         <div><label>食塩相当量（g）</label><input type="number" id="mSalt" inputmode="decimal" step="0.1"></div>
-        <div><label>カリウム（mg）</label><input type="number" id="mK" inputmode="decimal"></div>
-        <div><label>リン（mg）</label><input type="number" id="mP" inputmode="decimal"></div>
         <div><label>量（g・空欄可）</label><input type="number" id="mG" inputmode="decimal"></div>
       </div>
       <div class="btn-row">
@@ -428,10 +428,10 @@ document.querySelectorAll("nav button").forEach(btn => {
 /* ================= 今日画面 ================= */
 function todayTotals() {
   const entries = log[todayKey()] || [];
-  const sum = { kcal: 0, prot: 0, salt: 0, k: 0, p: 0 };
+  const sum = { kcal: 0, prot: 0, salt: 0, fat: 0, carb: 0 };
   for (const e of entries) {
     sum.kcal += e.kcal || 0; sum.prot += e.prot || 0; sum.salt += e.salt || 0;
-    sum.k += e.k || 0; sum.p += e.p || 0;
+    sum.fat += e.fat || 0; sum.carb += e.carb || 0;
   }
   return sum;
 }
@@ -467,7 +467,7 @@ function renderToday() {
       ? `<div class="unknown-note">⚠ 食塩が不明な記録が ${saltUnknown}件あります（食塩の合計に含まれていません）</div>`
       : "");
   $("minor").innerHTML =
-    `<span>カリウム ${fmt(t.k, 0)}mg</span><span>リン ${fmt(t.p, 0)}mg</span>`;
+    `<span>脂質 ${fmt(t.fat)}g</span><span>炭水化物 ${fmt(t.carb)}g</span>`;
 
   const entries = log[todayKey()] || [];
   $("todayList").innerHTML = entries.length === 0
@@ -502,7 +502,7 @@ function renderToday() {
       if (!e) return;
       const name = prompt("マイメニュー名（例: 朝の定番トースト）", e.name);
       if (!name) return;
-      myMenu.push({ name, g: e.g, kcal: e.kcal, prot: e.prot, salt: e.salt, k: e.k, p: e.p });
+      myMenu.push({ name, g: e.g, kcal: e.kcal, prot: e.prot, fat: e.fat, carb: e.carb, salt: e.salt });
       saveMenu(); toast("マイメニューに登録しました ⭐");
     }));
 }
@@ -528,7 +528,7 @@ $("btnMergeSave").addEventListener("click", () => {
     ? null
     : Math.round(picked.reduce((s, e) => s + e[key], 0) * 100) / 100;
   const merged = { name, g: sum("g"), kcal: sum("kcal"), prot: sum("prot"),
-                   salt: sum("salt"), k: sum("k"), p: sum("p") };
+                   fat: sum("fat"), carb: sum("carb"), salt: sum("salt") };
   // 今日の記録から選んだ分を外し、まとめた1件に置き換える（元の位置に挿入）
   const insertAt = Math.min(...idxs);
   for (const i of [...idxs].sort((a, b) => b - a)) entries.splice(i, 1);
@@ -566,7 +566,7 @@ $("q").addEventListener("input", () => {
     : hits.map((f, i) => `
       <div class="hit" data-hit="${i}">
         <div class="name">${esc(f[1])}</div>
-        <div class="detail">100gあたり: 塩 ${fmt(f[4])}g ・ たんぱく ${fmt(f[3])}g ・ ${fmt(f[2],0)}kcal</div>
+        <div class="detail">100gあたり: 塩 ${fmt(f[6])}g ・ たんぱく ${fmt(f[3])}g ・ ${fmt(f[2],0)}kcal</div>
       </div>`).join("");
   box.querySelectorAll("[data-hit]").forEach(el =>
     el.addEventListener("click", () => selectFood(hits[+el.dataset.hit])));
@@ -592,7 +592,7 @@ function calcEntry(f, g) {
   const r = g / 100;
   const mul = v => v == null ? null : Math.round(v * r * 100) / 100;
   return { name: f[1], code: f[0], g,
-           kcal: mul(f[2]), prot: mul(f[3]), salt: mul(f[4]), k: mul(f[5]), p: mul(f[6]) };
+           kcal: mul(f[2]), prot: mul(f[3]), fat: mul(f[4]), carb: mul(f[5]), salt: mul(f[6]) };
 }
 
 function updateAmountUI() {
@@ -603,7 +603,7 @@ function updateAmountUI() {
   const e = calcEntry(selectedFood, g);
   $("preview").innerHTML =
     `この量で: 塩 <b>${fmt(e.salt)}g</b> ・ たんぱく <b>${fmt(e.prot)}g</b> ・ <b>${fmt(e.kcal,0)}kcal</b>` +
-    `<br>カリウム ${fmt(e.k,0)}mg ・ リン ${fmt(e.p,0)}mg`;
+    `<br>脂質 ${fmt(e.fat)}g ・ 炭水化物 ${fmt(e.carb)}g`;
 }
 $("gInput").addEventListener("input", updateAmountUI);
 
@@ -627,7 +627,7 @@ $("btnScanToggle").addEventListener("click", () => {
       `<span class="basis-tag">パッケージの表示を見ながら入力してください（わかる項目だけでOK）</span>`;
     $("pName").value = "";
     $("pKcal").value = ""; $("pProt").value = ""; $("pSalt").value = "";
-    $("pK").value = ""; $("pP").value = "";
+    $("pFat").value = ""; $("pCarb").value = "";
     $("pBase").value = 100; $("pEat").value = 100;
     updateScanPreview();
   }
@@ -644,7 +644,7 @@ function scanEntry() {
   const name = $("pName").value.trim() || "パッケージ食品";
   return { name, g: eat,
            kcal: mul(num("pKcal")), prot: mul(num("pProt")), salt: mul(num("pSalt")),
-           k: mul(num("pK")), p: mul(num("pP")) };
+           fat: mul(num("pFat")), carb: mul(num("pCarb")) };
 }
 
 function updateScanPreview() {
@@ -654,7 +654,7 @@ function updateScanPreview() {
     : `食べた量に換算: 塩 <b>${e.salt == null ? "不明" : fmt(e.salt) + "g"}</b> ・ ` +
       `たんぱく <b>${e.prot == null ? "不明" : fmt(e.prot) + "g"}</b> ・ <b>${fmt(e.kcal,0)}kcal</b>`;
 }
-["pKcal", "pProt", "pSalt", "pK", "pP", "pBase", "pEat"].forEach(id =>
+["pKcal", "pProt", "pSalt", "pFat", "pCarb", "pBase", "pEat"].forEach(id =>
   $(id).addEventListener("input", updateScanPreview));
 
 function resetScanPanel() {
@@ -677,7 +677,7 @@ $("btnScanAdd").addEventListener("click", () => {
   }
   addEntry(e);
   if ($("pName").value.trim()) {
-    upsertMyMenu({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot, salt: e.salt, k: e.k, p: e.p });
+    upsertMyMenu({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot, fat: e.fat, carb: e.carb, salt: e.salt });
     toast("記録し、マイメニューにも登録しました ⭐");
   } else {
     toast("記録しました ✓");
@@ -725,8 +725,8 @@ function openMenuEdit(i) {
   menuEditIndex = i;
   $("mName").value = m.name;
   $("mKcal").value = m.kcal ?? ""; $("mProt").value = m.prot ?? "";
-  $("mSalt").value = m.salt ?? ""; $("mK").value = m.k ?? "";
-  $("mP").value = m.p ?? ""; $("mG").value = m.g ?? "";
+  $("mFat").value = m.fat ?? ""; $("mCarb").value = m.carb ?? "";
+  $("mSalt").value = m.salt ?? ""; $("mG").value = m.g ?? "";
   $("menuEditCard").style.display = "";
   $("menuEditCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -744,7 +744,7 @@ $("btnMenuEditSave").addEventListener("click", () => {
   if (!name) { toast("名前を入力してください"); return; }
   const num = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
   myMenu[menuEditIndex] = { name, g: num("mG"), kcal: num("mKcal"), prot: num("mProt"),
-                            salt: num("mSalt"), k: num("mK"), p: num("mP") };
+                            fat: num("mFat"), carb: num("mCarb"), salt: num("mSalt") };
   saveMenu(); closeMenuEdit(); renderMenu();
   toast("保存しました ✓");
 });
@@ -752,10 +752,10 @@ $("btnMenuEditSave").addEventListener("click", () => {
 /* ================= 履歴画面 ================= */
 function dayTotals(key) {
   const entries = log[key] || [];
-  const sum = { kcal: 0, prot: 0, salt: 0, k: 0, p: 0, n: entries.length };
+  const sum = { kcal: 0, prot: 0, salt: 0, fat: 0, carb: 0, n: entries.length };
   for (const e of entries) {
     sum.kcal += e.kcal || 0; sum.prot += e.prot || 0; sum.salt += e.salt || 0;
-    sum.k += e.k || 0; sum.p += e.p || 0;
+    sum.fat += e.fat || 0; sum.carb += e.carb || 0;
   }
   return sum;
 }
@@ -849,13 +849,13 @@ $("btnVital").addEventListener("click", () => {
 $("btnCsv").addEventListener("click", () => {
   const allKeys = [...new Set([...Object.keys(log), ...Object.keys(vitals)])].sort();
   if (allKeys.length === 0) { toast("まだ記録がありません"); return; }
-  const rows = [["日付","食塩g","たんぱく質g","エネルギーkcal","カリウムmg","リンmg","体重kg","血圧上","血圧下","eGFR"]];
+  const rows = [["日付","食塩g","たんぱく質g","エネルギーkcal","脂質g","炭水化物g","体重kg","血圧上","血圧下","eGFR"]];
   for (const k of allKeys) {
     const t = dayTotals(k), v = vitals[k] || {};
     const cell = x => x == null ? "" : x;
     rows.push([k,
       t.n ? t.salt.toFixed(2) : "", t.n ? t.prot.toFixed(1) : "", t.n ? Math.round(t.kcal) : "",
-      t.n ? Math.round(t.k) : "", t.n ? Math.round(t.p) : "",
+      t.n ? t.fat.toFixed(1) : "", t.n ? t.carb.toFixed(1) : "",
       cell(v.w), cell(v.sbp), cell(v.dbp), cell(v.egfr)]);
   }
   const csv = "﻿" + rows.map(r => r.join(",")).join("\r\n");  // BOM付きでExcelの文字化けを防ぐ

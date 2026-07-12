@@ -232,7 +232,7 @@
         <div id="parseResult">
           <div id="parseBasis"></div>
           <div class="parse-grid">
-            <div class="wide"><label>名前（商品名など）</label><input type="text" id="pName" placeholder="例: カップみそ汁"></div>
+            <div class="wide"><label>名前（付けると自動でマイメニューにも登録され、次から使えます）</label><input type="text" id="pName" placeholder="例: カップみそ汁"></div>
             <div class="wide"><label>表示の基準量（◯g当たりのg数）</label><input type="number" id="pBase" inputmode="decimal" value="100"></div>
             <div><label>エネルギー（kcal）</label><input type="number" id="pKcal" inputmode="decimal"></div>
             <div><label>たんぱく質（g）</label><input type="number" id="pProt" inputmode="decimal" step="0.1"></div>
@@ -242,10 +242,7 @@
             <div><label>食べた量（g）</label><input type="number" id="pEat" inputmode="decimal" value="100"></div>
           </div>
           <div class="preview" id="scanPreview"></div>
-          <div class="btn-row">
-            <button class="btn-primary" id="btnScanAdd">記録に追加</button>
-            <button class="btn-secondary" id="btnScanMenu">⭐ マイメニューに登録</button>
-          </div>
+          <button class="btn-primary" id="btnScanAdd">記録に追加</button>
         </div>
       </div>
     </div>
@@ -256,6 +253,22 @@
     <div class="card">
       <h2>マイメニュー（★で登録した食事）</h2>
       <div id="menuList"></div>
+    </div>
+    <div class="card" id="menuEditCard" style="display:none">
+      <h2>マイメニューの編集</h2>
+      <div class="parse-grid">
+        <div class="wide"><label>名前</label><input type="text" id="mName"></div>
+        <div><label>エネルギー（kcal）</label><input type="number" id="mKcal" inputmode="decimal"></div>
+        <div><label>たんぱく質（g）</label><input type="number" id="mProt" inputmode="decimal" step="0.1"></div>
+        <div><label>食塩相当量（g）</label><input type="number" id="mSalt" inputmode="decimal" step="0.1"></div>
+        <div><label>カリウム（mg）</label><input type="number" id="mK" inputmode="decimal"></div>
+        <div><label>リン（mg）</label><input type="number" id="mP" inputmode="decimal"></div>
+        <div><label>量（g・空欄可）</label><input type="number" id="mG" inputmode="decimal"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn-primary" id="btnMenuEditSave">保存</button>
+        <button class="btn-secondary" id="btnMenuEditCancel">やめる</button>
+      </div>
     </div>
   </section>
 
@@ -504,21 +517,27 @@ $("btnMergeMode").addEventListener("click", () => {
 
 $("btnMergeSave").addEventListener("click", () => {
   const entries = log[todayKey()] || [];
-  const picked = [...$("todayList").querySelectorAll(".merge-cb:checked")]
-    .map(cb => entries[+cb.dataset.cb]).filter(Boolean);
-  if (picked.length < 2) { toast("2つ以上選んでください"); return; }
+  const idxs = [...$("todayList").querySelectorAll(".merge-cb:checked")]
+    .map(cb => +cb.dataset.cb).filter(i => entries[i]);
+  if (idxs.length < 2) { toast("2つ以上選んでください"); return; }
   const name = prompt("まとめた食事の名前（例: いつもの朝食）", "");
   if (!name) return;
+  const picked = idxs.map(i => entries[i]);
   // 合算。1つでも不明(null)の栄養素があれば合計も不明にする（過小評価を防ぐ）
   const sum = key => picked.some(e => e[key] == null)
     ? null
     : Math.round(picked.reduce((s, e) => s + e[key], 0) * 100) / 100;
-  myMenu.push({ name, g: null, kcal: sum("kcal"), prot: sum("prot"),
-                salt: sum("salt"), k: sum("k"), p: sum("p") });
-  saveMenu();
+  const merged = { name, g: sum("g"), kcal: sum("kcal"), prot: sum("prot"),
+                   salt: sum("salt"), k: sum("k"), p: sum("p") };
+  // 今日の記録から選んだ分を外し、まとめた1件に置き換える（元の位置に挿入）
+  const insertAt = Math.min(...idxs);
+  for (const i of [...idxs].sort((a, b) => b - a)) entries.splice(i, 1);
+  entries.splice(insertAt, 0, { ...merged });
+  saveLog();
+  upsertMyMenu({ ...merged });
   mergeMode = false;
   renderToday();
-  toast(`「${name}」をマイメニューに登録しました ⭐`);
+  toast(`「${name}」にまとめ、マイメニューにも登録しました ⭐`);
 });
 
 function addEntry(entry) {
@@ -643,6 +662,13 @@ function resetScanPanel() {
   $("scanPanel").style.display = "none";
 }
 
+// 同名があれば上書き、なければ追加
+function upsertMyMenu(item) {
+  const i = myMenu.findIndex(m => m.name === item.name);
+  if (i >= 0) myMenu[i] = item; else myMenu.push(item);
+  saveMenu();
+}
+
 $("btnScanAdd").addEventListener("click", () => {
   const e = scanEntry();
   if (e.kcal == null && e.prot == null && e.salt == null) {
@@ -650,30 +676,29 @@ $("btnScanAdd").addEventListener("click", () => {
     return;
   }
   addEntry(e);
-  toast("記録しました ✓");
-  resetScanPanel();
-});
-
-$("btnScanMenu").addEventListener("click", () => {
-  const e = scanEntry();
-  if (!$("pName").value.trim()) { toast("マイメニュー登録には名前を入れてください"); return; }
-  myMenu.push({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot, salt: e.salt, k: e.k, p: e.p });
-  saveMenu();
-  toast("マイメニューに登録しました ⭐");
+  if ($("pName").value.trim()) {
+    upsertMyMenu({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot, salt: e.salt, k: e.k, p: e.p });
+    toast("記録し、マイメニューにも登録しました ⭐");
+  } else {
+    toast("記録しました ✓");
+  }
   resetScanPanel();
 });
 
 /* ================= マイメニュー画面 ================= */
+let menuEditIndex = null;
+
 function renderMenu() {
   $("menuList").innerHTML = myMenu.length === 0
-    ? `<div class="empty">まだ登録がありません。<br>「今日」の記録の ☆ を押すと登録できます。</div>`
+    ? `<div class="empty">まだ登録がありません。<br>「今日」の記録の ☆ か、検索タブの手入力で登録できます。</div>`
     : myMenu.map((m, i) => `
       <div class="menu-item">
         <div class="info">
           <div class="name">${esc(m.name)}</div>
-          <div class="detail">塩 ${fmt(m.salt)}g ・ たんぱく ${fmt(m.prot)}g ・ ${fmt(m.kcal,0)}kcal</div>
+          <div class="detail">塩 ${m.salt == null ? "不明" : fmt(m.salt) + "g"} ・ たんぱく ${m.prot == null ? "不明" : fmt(m.prot) + "g"} ・ ${fmt(m.kcal,0)}kcal</div>
         </div>
         <button class="btn-add" data-add="${i}">追加</button>
+        <button class="btn-del" data-medit="${i}" title="編集">✎</button>
         <button class="btn-del" data-mdel="${i}" title="削除">✕</button>
       </div>`).join("");
 
@@ -683,14 +708,46 @@ function renderMenu() {
       addEntry({ ...m });
       toast(`「${m.name}」を記録しました ✓`);
     }));
+  $("menuList").querySelectorAll("[data-medit]").forEach(b =>
+    b.addEventListener("click", () => openMenuEdit(+b.dataset.medit)));
   $("menuList").querySelectorAll("[data-mdel]").forEach(b =>
     b.addEventListener("click", () => {
       const i = +b.dataset.mdel;
       if (!confirm(`マイメニュー「${myMenu[i].name}」を削除しますか？`)) return;
       myMenu.splice(i, 1);
-      saveMenu(); renderMenu();
+      saveMenu(); closeMenuEdit(); renderMenu();
     }));
 }
+
+function openMenuEdit(i) {
+  const m = myMenu[i];
+  if (!m) return;
+  menuEditIndex = i;
+  $("mName").value = m.name;
+  $("mKcal").value = m.kcal ?? ""; $("mProt").value = m.prot ?? "";
+  $("mSalt").value = m.salt ?? ""; $("mK").value = m.k ?? "";
+  $("mP").value = m.p ?? ""; $("mG").value = m.g ?? "";
+  $("menuEditCard").style.display = "";
+  $("menuEditCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function closeMenuEdit() {
+  menuEditIndex = null;
+  $("menuEditCard").style.display = "none";
+}
+
+$("btnMenuEditCancel").addEventListener("click", closeMenuEdit);
+
+$("btnMenuEditSave").addEventListener("click", () => {
+  if (menuEditIndex == null || !myMenu[menuEditIndex]) return;
+  const name = $("mName").value.trim();
+  if (!name) { toast("名前を入力してください"); return; }
+  const num = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
+  myMenu[menuEditIndex] = { name, g: num("mG"), kcal: num("mKcal"), prot: num("mProt"),
+                            salt: num("mSalt"), k: num("mK"), p: num("mP") };
+  saveMenu(); closeMenuEdit(); renderMenu();
+  toast("保存しました ✓");
+});
 
 /* ================= 履歴画面 ================= */
 function dayTotals(key) {

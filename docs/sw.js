@@ -2,7 +2,7 @@
  * ネットワーク優先＋キャッシュフォールバック:
  * オンライン時は常に最新を取得し、オフライン時はキャッシュで動作する。
  */
-const CACHE = "sanjournal-v5";
+const CACHE = "sanjournal-v6";
 const ASSETS = [
   "./",
   "./index.html",

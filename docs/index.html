@@ -75,9 +75,21 @@
     font-size: 1.4rem; color: var(--sub); touch-action: none; cursor: grab;
     user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   }
-  .entry.dragging { position: relative; z-index: 10; border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+  .drag-row.dragging { position: relative; z-index: 10; border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
   .entry button { flex-shrink: 0; }
   .empty { color: var(--sub); text-align: center; padding: 18px 0; font-size: .95rem; }
+  .expand-btn { background: none; color: var(--sub); font-size: .95rem; padding: 0 6px 0 0; }
+  .subitems { margin-top: 6px; padding-left: 2px; border-left: 2px solid var(--line); }
+  .subitem { font-size: .8rem; color: var(--sub); padding: 3px 0 3px 8px; }
+  .subitems .btn-small { margin: 6px 0 2px 8px; }
+
+  /* --- 日付ナビ --- */
+  .date-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; }
+  .date-nav button.nav-arrow { background: #eef1f5; color: var(--text); width: 44px; height: 40px; font-size: 1.2rem; flex-shrink: 0; }
+  .date-nav button.nav-arrow:disabled { opacity: .3; }
+  .date-nav .dn-center { flex: 1; text-align: center; }
+  .date-nav .dn-date { font-size: 1rem; font-weight: 700; }
+  .date-nav .dn-today { display: block; margin: 4px auto 0; font-size: .8rem; }
 
   /* --- ボタン --- */
   button {
@@ -116,7 +128,7 @@
   .preview { font-size: .9rem; color: var(--sub); margin: 8px 0 12px; line-height: 1.6; }
 
   /* --- マイメニュー --- */
-  .menu-item { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .menu-item { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); background: var(--card); }
   .menu-item:last-child { border-bottom: 0; }
   .menu-item .info { flex: 1; min-width: 0; }
 
@@ -201,13 +213,21 @@
 <main>
   <!-- ============ 今日 ============ -->
   <section class="screen active" id="scr-today">
+    <div class="card date-nav">
+      <button class="nav-arrow" id="btnPrevDay" title="前の日">‹</button>
+      <div class="dn-center">
+        <span class="dn-date" id="viewDateLabel"></span>
+        <button class="btn-small dn-today" id="btnToday" style="display:none">今日へ戻る</button>
+      </div>
+      <button class="nav-arrow" id="btnNextDay" title="次の日">›</button>
+    </div>
     <div class="card" id="gauges"></div>
     <div class="card">
       <h2>参考（1日の摂取量）</h2>
       <div class="minor-row" id="minor"></div>
     </div>
     <div class="card">
-      <h2>今日の記録 <button class="btn-small" id="btnMergeMode">まとめる</button></h2>
+      <h2 id="recordHeading">今日の記録 <button class="btn-small" id="btnMergeMode">まとめる</button></h2>
       <div id="todayList"></div>
       <div id="mergeActions" style="display:none; margin-top:12px">
         <button class="btn-primary" id="btnMergeSave">⭐ 選んだ食事を1つにまとめて登録</button>
@@ -230,7 +250,7 @@
         <span class="unit">g</span>
       </div>
       <div class="preview" id="preview"></div>
-      <button class="btn-primary" id="btnAdd">今日の記録に追加</button>
+      <button class="btn-primary" id="btnAdd">記録に追加</button>
     </div>
     <div class="card">
       <button class="btn-secondary" style="width:100%" id="btnScanToggle">⌨ パッケージの栄養成分表示を手入力で登録</button>
@@ -409,7 +429,7 @@ const saveMenu = () => store.save("kd_mymenu", myMenu);
 const saveVitals = () => store.save("kd_vitals", vitals);
 
 /* ================= 食品DB ================= */
-let FOODS = [];   // [code, name, kcal, prot, salt, k, p, yomi, 検索用文字列]
+let FOODS = [];   // [code, name, kcal, prot, fat, carb, salt, yomi, 検索用文字列]
 const SEARCH_IDX = 8;
 
 async function loadFoods() {
@@ -424,7 +444,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
     $("scr-" + btn.dataset.scr).classList.add("active");
-    if (btn.dataset.scr === "today") renderToday();
+    if (btn.dataset.scr === "today") { viewDate = todayKey(); renderToday(); }
     if (btn.dataset.scr === "menu") renderMenu();
     if (btn.dataset.scr === "history") renderHistory();
     if (btn.dataset.scr === "search") setTimeout(() => $("q").focus(), 50);
@@ -432,8 +452,24 @@ document.querySelectorAll("nav button").forEach(btn => {
 });
 
 /* ================= 今日画面 ================= */
-function todayTotals() {
-  const entries = log[todayKey()] || [];
+let viewDate = todayKey();                 // 表示中の日付（過去も閲覧可能）
+const expandedEntries = new WeakSet();     // 内訳を展開中のまとめ記録（オブジェクト参照で保持）
+
+function shiftDate(key, days) {
+  const [y, m, d] = key.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
+}
+
+function dateLabel(key) {
+  const [y, m, d] = key.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  const base = dt.toLocaleDateString("ja-JP", { month: "long", day: "numeric", weekday: "short" });
+  return key === todayKey() ? `今日（${base}）` : base;
+}
+
+function dayTotalsOf(key) {
+  const entries = log[key] || [];
   const sum = { kcal: 0, prot: 0, salt: 0, fat: 0, carb: 0 };
   for (const e of entries) {
     sum.kcal += e.kcal || 0; sum.prot += e.prot || 0; sum.salt += e.salt || 0;
@@ -460,11 +496,23 @@ function gaugeHtml(label, used, max, unit, digits) {
     </div>`;
 }
 
+function subitemLine(it) {
+  return `・${esc(it.name)}　${it.g ? fmt(it.g,0) + "g ・ " : ""}塩 ${it.salt == null ? "不明" : fmt(it.salt) + "g"} ・ たんぱく ${it.prot == null ? "不明" : fmt(it.prot) + "g"} ・ ${fmt(it.kcal,0)}kcal`;
+}
+
 function renderToday() {
   $("hdrDate").textContent = new Date().toLocaleDateString("ja-JP", { month: "long", day: "numeric", weekday: "short" });
-  const t = todayTotals();
-  const entriesToday = log[todayKey()] || [];
-  const saltUnknown = entriesToday.filter(e => e.salt == null).length;
+
+  // 日付ナビ
+  const isToday = viewDate === todayKey();
+  $("viewDateLabel").textContent = dateLabel(viewDate);
+  $("btnToday").style.display = isToday ? "none" : "";
+  $("btnNextDay").disabled = isToday;               // 未来には進めない
+  $("recordHeading").childNodes[0].nodeValue = (isToday ? "今日" : dateLabel(viewDate)) + "の記録 ";
+
+  const t = dayTotalsOf(viewDate);
+  const entries = log[viewDate] || [];
+  const saltUnknown = entries.filter(e => e.salt == null).length;
   $("gauges").innerHTML =
     gaugeHtml("食塩", t.salt, settings.salt, "g", 1) +
     gaugeHtml("たんぱく質", t.prot, settings.prot, "g", 1) +
@@ -475,21 +523,28 @@ function renderToday() {
   $("minor").innerHTML =
     `<span>脂質 ${fmt(t.fat)}g</span><span>炭水化物 ${fmt(t.carb)}g</span>`;
 
-  const entries = log[todayKey()] || [];
   $("todayList").innerHTML = entries.length === 0
     ? `<div class="empty">まだ記録がありません。<br>下の「検索」から食品を追加してください。</div>`
-    : entries.map((e, i) => `
-      <div class="entry">
+    : entries.map((e, i) => {
+        const hasItems = Array.isArray(e.items) && e.items.length;
+        const open = expandedEntries.has(e);
+        const sub = hasItems && open
+          ? `<div class="subitems">${e.items.map(subitemLine).map(s => `<div class="subitem">${s}</div>`).join("")}<button class="btn-small" data-ungroup="${i}">まとめを解除</button></div>`
+          : "";
+        return `
+      <div class="drag-row entry">
         ${mergeMode
           ? `<input type="checkbox" class="merge-cb" data-cb="${i}">`
-          : `<span class="drag-handle" data-idx="${i}">⠿</span>`}
+          : `<span class="drag-handle">⠿</span>`}
         <div class="info">
-          <div class="name">${esc(e.name)}</div>
+          <div class="name">${hasItems ? `<button class="expand-btn" data-exp="${i}">${open ? "▾" : "▸"}</button>` : ""}${esc(e.name)}</div>
           <div class="detail">${e.g ? fmt(e.g,0) + "g ・ " : ""}塩 ${e.salt == null ? "不明" : fmt(e.salt) + "g"} ・ たんぱく ${e.prot == null ? "不明" : fmt(e.prot) + "g"} ・ ${fmt(e.kcal,0)}kcal</div>
+          ${sub}
         </div>
         ${mergeMode ? "" : `<button class="btn-star" data-star="${i}" title="マイメニューに登録">☆</button>
         <button class="btn-del" data-del="${i}" title="削除">✕</button>`}
-      </div>`).join("");
+      </div>`;
+      }).join("");
 
   $("btnMergeMode").textContent = mergeMode ? "やめる" : "まとめる";
   $("btnMergeMode").style.display = entries.length >= 2 || mergeMode ? "" : "none";
@@ -498,43 +553,72 @@ function renderToday() {
   $("todayList").querySelectorAll("[data-del]").forEach(b =>
     b.addEventListener("click", () => {
       const i = +b.dataset.del;
-      const e = (log[todayKey()] || [])[i];
+      const e = (log[viewDate] || [])[i];
       if (!e) return;
       if (!confirm(`「${e.name}」を削除しますか？`)) return;
-      log[todayKey()].splice(i, 1);
+      log[viewDate].splice(i, 1);
       saveLog(); renderToday();
     }));
   $("todayList").querySelectorAll("[data-star]").forEach(b =>
     b.addEventListener("click", () => {
-      const e = (log[todayKey()] || [])[+b.dataset.star];
+      const e = (log[viewDate] || [])[+b.dataset.star];
       if (!e) return;
       const name = prompt("マイメニュー名（例: 朝の定番トースト）", e.name);
       if (!name) return;
-      myMenu.push({ name, g: e.g, kcal: e.kcal, prot: e.prot, fat: e.fat, carb: e.carb, salt: e.salt });
-      saveMenu(); toast("マイメニューに登録しました ⭐");
+      upsertMyMenu({ name, g: e.g, kcal: e.kcal, prot: e.prot, fat: e.fat, carb: e.carb, salt: e.salt,
+                     ...(Array.isArray(e.items) ? { items: e.items.map(x => ({ ...x })) } : {}) });
+      toast("マイメニューに登録しました ⭐");
+    }));
+  $("todayList").querySelectorAll("[data-exp]").forEach(b =>
+    b.addEventListener("click", () => {
+      const e = (log[viewDate] || [])[+b.dataset.exp];
+      if (!e) return;
+      if (expandedEntries.has(e)) expandedEntries.delete(e); else expandedEntries.add(e);
+      renderToday();
+    }));
+  $("todayList").querySelectorAll("[data-ungroup]").forEach(b =>
+    b.addEventListener("click", () => {
+      const i = +b.dataset.ungroup;
+      const e = (log[viewDate] || [])[i];
+      if (!e || !Array.isArray(e.items)) return;
+      log[viewDate].splice(i, 1, ...e.items.map(x => ({ ...x })));
+      saveLog(); renderToday();
+      toast("まとめを解除しました");
     }));
 
-  attachDragHandlers();
+  attachDrag($("todayList"), order => {
+    const es = log[viewDate] || [];
+    log[viewDate] = order.map(i => es[i]);
+    saveLog(); renderToday();
+  });
 }
 
-/* --- 今日の記録をドラッグで並べ替え --- */
+/* --- 日付ナビ --- */
+$("btnPrevDay").addEventListener("click", () => { viewDate = shiftDate(viewDate, -1); renderToday(); });
+$("btnNextDay").addEventListener("click", () => {
+  if (viewDate === todayKey()) return;
+  viewDate = shiftDate(viewDate, 1); renderToday();
+});
+$("btnToday").addEventListener("click", () => { viewDate = todayKey(); renderToday(); });
+
+/* --- リストをドラッグで並べ替え（今日の記録・マイメニュー共通） --- */
 let dragState = null;
 
-function attachDragHandlers() {
-  $("todayList").querySelectorAll(".drag-handle").forEach(handle =>
-    handle.addEventListener("pointerdown", onDragStart));
+function attachDrag(container, commit) {
+  container.querySelectorAll(".drag-handle").forEach(handle =>
+    handle.addEventListener("pointerdown", e => onDragStart(e, container, commit)));
 }
 
-function onDragStart(e) {
-  const row = e.currentTarget.closest(".entry");
-  const rows = [...$("todayList").querySelectorAll(".entry")];
+function onDragStart(e, container, commit) {
+  const row = e.currentTarget.closest(".drag-row");
+  const rows = [...container.querySelectorAll(".drag-row")];
   const startIndex = rows.indexOf(row);
   const rects = rows.map(r => r.getBoundingClientRect());
   let offset = 0;
   const offsets = rects.map(r => { const o = offset; offset += r.height; return o; });
 
   dragState = {
-    row, rows, startIndex,
+    row, rows, startIndex, commit,
     order: rows.map((_, i) => i),   // order[表示スロット] = 元のindex
     heights: rects.map(r => r.height),
     offsets,
@@ -579,19 +663,13 @@ function onDragEnd() {
   document.removeEventListener("pointerup", onDragEnd);
   document.removeEventListener("pointercancel", onDragEnd);
 
-  const { row, rows, order, startIndex } = dragState;
+  const { row, rows, order, startIndex, commit } = dragState;
   row.classList.remove("dragging");
-  row.style.transform = ""; row.style.transition = "";
   rows.forEach(r => { r.style.transform = ""; r.style.transition = ""; });
 
-  const entries = log[todayKey()] || [];
   const moved = order.indexOf(startIndex) !== startIndex;
-  if (moved) {
-    log[todayKey()] = order.map(i => entries[i]);
-    saveLog();
-  }
   dragState = null;
-  renderToday();
+  if (moved) commit(order);     // commit内で再描画される
 }
 
 /* --- 複数の記録を合算して1つのマイメニューにする --- */
@@ -603,34 +681,44 @@ $("btnMergeMode").addEventListener("click", () => {
 });
 
 $("btnMergeSave").addEventListener("click", () => {
-  const entries = log[todayKey()] || [];
+  const entries = log[viewDate] || [];
   const idxs = [...$("todayList").querySelectorAll(".merge-cb:checked")]
     .map(cb => +cb.dataset.cb).filter(i => entries[i]);
   if (idxs.length < 2) { toast("2つ以上選んでください"); return; }
   const name = prompt("まとめた食事の名前（例: いつもの朝食）", "");
   if (!name) return;
   const picked = idxs.map(i => entries[i]);
+  // 内訳を保持（まとめの中に個別データを残す。入れ子は展開して平らにする）
+  const items = [];
+  for (const e of picked) {
+    if (Array.isArray(e.items)) items.push(...e.items.map(x => ({ ...x })));
+    else { const { items: _drop, ...plain } = e; items.push(plain); }
+  }
   // 合算。1つでも不明(null)の栄養素があれば合計も不明にする（過小評価を防ぐ）
   const sum = key => picked.some(e => e[key] == null)
     ? null
     : Math.round(picked.reduce((s, e) => s + e[key], 0) * 100) / 100;
   const merged = { name, g: sum("g"), kcal: sum("kcal"), prot: sum("prot"),
-                   fat: sum("fat"), carb: sum("carb"), salt: sum("salt") };
-  // 今日の記録から選んだ分を外し、まとめた1件に置き換える（元の位置に挿入）
+                   fat: sum("fat"), carb: sum("carb"), salt: sum("salt"), items };
+  // 選んだ分を外し、まとめた1件に置き換える（元の位置に挿入）
   const insertAt = Math.min(...idxs);
   for (const i of [...idxs].sort((a, b) => b - a)) entries.splice(i, 1);
-  entries.splice(insertAt, 0, { ...merged });
+  entries.splice(insertAt, 0, { ...merged, items: items.map(x => ({ ...x })) });
   saveLog();
-  upsertMyMenu({ ...merged });
+  upsertMyMenu({ ...merged, items: items.map(x => ({ ...x })) });
   mergeMode = false;
   renderToday();
   toast(`「${name}」にまとめ、マイメニューにも登録しました ⭐`);
 });
 
 function addEntry(entry) {
-  const key = todayKey();
-  (log[key] = log[key] || []).push(entry);
+  (log[viewDate] = log[viewDate] || []).push(entry);
   saveLog();
+}
+
+// 追加時のトースト。過去日を見ているときはどの日付に入ったか明示する
+function toastRecorded(msg) {
+  toast(msg + (viewDate === todayKey() ? "" : ` → ${dateLabel(viewDate)}`));
 }
 
 /* ================= 検索画面 ================= */
@@ -699,7 +787,7 @@ $("btnAdd").addEventListener("click", () => {
   const g = parseFloat($("gInput").value);
   if (!g || g <= 0) { toast("量（g）を入力してください"); return; }
   addEntry(calcEntry(selectedFood, g));
-  toast("記録しました ✓");
+  toastRecorded("記録しました ✓");
   $("amountPanel").style.display = "none";
   $("q").value = ""; $("hits").innerHTML = "";
   selectedFood = null;
@@ -765,9 +853,9 @@ $("btnScanAdd").addEventListener("click", () => {
   addEntry(e);
   if ($("pName").value.trim()) {
     upsertMyMenu({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot, fat: e.fat, carb: e.carb, salt: e.salt });
-    toast("記録し、マイメニューにも登録しました ⭐");
+    toastRecorded("記録し、マイメニューにも登録しました ⭐");
   } else {
-    toast("記録しました ✓");
+    toastRecorded("記録しました ✓");
   }
   resetScanPanel();
 });
@@ -778,22 +866,26 @@ let menuEditIndex = null;
 function renderMenu() {
   $("menuList").innerHTML = myMenu.length === 0
     ? `<div class="empty">まだ登録がありません。<br>「今日」の記録の ☆ か、検索タブの手入力で登録できます。</div>`
-    : myMenu.map((m, i) => `
-      <div class="menu-item">
+    : myMenu.map((m, i) => {
+        const parts = Array.isArray(m.items) && m.items.length ? `（内訳${m.items.length}品）` : "";
+        return `
+      <div class="drag-row menu-item">
+        <span class="drag-handle">⠿</span>
         <div class="info">
-          <div class="name">${esc(m.name)}</div>
+          <div class="name">${esc(m.name)}${parts}</div>
           <div class="detail">塩 ${m.salt == null ? "不明" : fmt(m.salt) + "g"} ・ たんぱく ${m.prot == null ? "不明" : fmt(m.prot) + "g"} ・ ${fmt(m.kcal,0)}kcal</div>
         </div>
         <button class="btn-add" data-add="${i}">追加</button>
         <button class="btn-del" data-medit="${i}" title="編集">✎</button>
         <button class="btn-del" data-mdel="${i}" title="削除">✕</button>
-      </div>`).join("");
+      </div>`;
+      }).join("");
 
   $("menuList").querySelectorAll("[data-add]").forEach(b =>
     b.addEventListener("click", () => {
       const m = myMenu[+b.dataset.add];
-      addEntry({ ...m });
-      toast(`「${m.name}」を記録しました ✓`);
+      addEntry(structuredClone(m));
+      toastRecorded(`「${m.name}」を記録しました ✓`);
     }));
   $("menuList").querySelectorAll("[data-medit]").forEach(b =>
     b.addEventListener("click", () => openMenuEdit(+b.dataset.medit)));
@@ -804,6 +896,11 @@ function renderMenu() {
       myMenu.splice(i, 1);
       saveMenu(); closeMenuEdit(); renderMenu();
     }));
+
+  attachDrag($("menuList"), order => {
+    myMenu = order.map(i => myMenu[i]);
+    saveMenu(); renderMenu();
+  });
 }
 
 function openMenuEdit(i) {

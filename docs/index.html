@@ -788,8 +788,12 @@ $("btnAdd").addEventListener("click", () => {
   if (!selectedFood) return;
   const g = parseFloat($("gInput").value);
   if (!g || g <= 0) { toast("量（g）を入力してください"); return; }
-  addEntry(calcEntry(selectedFood, g));
-  toastRecorded("記録しました ✓");
+  const e = calcEntry(selectedFood, g);
+  addEntry(e);
+  // マイメニューにも自動登録（同名は上書き。設定済みカテゴリは引き継がれる）
+  upsertMyMenu({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot,
+                 fat: e.fat, carb: e.carb, salt: e.salt });
+  toastRecorded("記録し、マイメニューにも登録しました ⭐");
   $("amountPanel").style.display = "none";
   $("q").value = ""; $("hits").innerHTML = "";
   selectedFood = null;

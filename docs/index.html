@@ -278,12 +278,14 @@
   <section class="screen" id="scr-menu">
     <div class="card">
       <h2>マイメニュー（★で登録した食事）</h2>
+      <div class="chips" id="menuFilterChips" style="margin:0 0 10px"></div>
       <div id="menuList"></div>
     </div>
     <div class="card" id="menuEditCard" style="display:none">
       <h2>マイメニューの編集</h2>
       <div class="parse-grid">
         <div class="wide"><label>名前</label><input type="text" id="mName"></div>
+        <div class="wide"><label>カテゴリ</label><div class="chips" id="mCatChips" style="margin:0"></div></div>
         <div><label>エネルギー（kcal）</label><input type="number" id="mKcal" inputmode="decimal"></div>
         <div><label>たんぱく質（g）</label><input type="number" id="mProt" inputmode="decimal" step="0.1"></div>
         <div><label>脂質（g）</label><input type="number" id="mFat" inputmode="decimal" step="0.1"></div>
@@ -837,10 +839,11 @@ function resetScanPanel() {
   $("scanPanel").style.display = "none";
 }
 
-// 同名があれば上書き、なければ追加
+// 同名があれば上書き（設定済みカテゴリは引き継ぐ）、なければ追加
 function upsertMyMenu(item) {
   const i = myMenu.findIndex(m => m.name === item.name);
-  if (i >= 0) myMenu[i] = item; else myMenu.push(item);
+  if (i >= 0) myMenu[i] = { ...(myMenu[i].cat ? { cat: myMenu[i].cat } : {}), ...item };
+  else myMenu.push(item);
   saveMenu();
 }
 
@@ -862,22 +865,48 @@ $("btnScanAdd").addEventListener("click", () => {
 
 /* ================= マイメニュー画面 ================= */
 let menuEditIndex = null;
+const MENU_CATS = ["朝食", "昼食", "夕食", "間食", "その他"];
+let menuFilter = "すべて";
+let editCat = "その他";
+
+const normCat = c => MENU_CATS.includes(c) ? c : "その他";
 
 function renderMenu() {
-  $("menuList").innerHTML = myMenu.length === 0
-    ? `<div class="empty">まだ登録がありません。<br>「今日」の記録の ☆ か、検索タブの手入力で登録できます。</div>`
-    : myMenu.map((m, i) => {
+  // カテゴリ絞り込みチップ（件数付き）
+  const counts = {};
+  MENU_CATS.forEach(c => counts[c] = 0);
+  myMenu.forEach(m => counts[normCat(m.cat)]++);
+  $("menuFilterChips").innerHTML = ["すべて", ...MENU_CATS].map(c => {
+    const n = c === "すべて" ? myMenu.length : counts[c];
+    return `<button class="chip${menuFilter === c ? " on" : ""}" data-mf="${c}">${c} ${n}</button>`;
+  }).join("");
+  $("menuFilterChips").querySelectorAll(".chip").forEach(b =>
+    b.addEventListener("click", () => {
+      menuFilter = b.dataset.mf;
+      renderMenu();
+    }));
+
+  // 絞り込み（gi = myMenu内のindex）
+  const filtered = myMenu.map((m, gi) => ({ m, gi }))
+    .filter(x => menuFilter === "すべて" || normCat(x.m.cat) === menuFilter);
+
+  $("menuList").innerHTML = filtered.length === 0
+    ? `<div class="empty">${myMenu.length === 0
+        ? "まだ登録がありません。<br>「今日」の記録の ☆ か、検索タブの手入力で登録できます。"
+        : "このカテゴリにはまだ登録がありません。<br>✎編集でカテゴリを設定できます。"}</div>`
+    : filtered.map(({ m, gi }) => {
         const parts = Array.isArray(m.items) && m.items.length ? `（内訳${m.items.length}品）` : "";
+        const catTag = menuFilter === "すべて" && normCat(m.cat) !== "その他" ? `${normCat(m.cat)} ・ ` : "";
         return `
       <div class="drag-row menu-item">
         <span class="drag-handle">⠿</span>
         <div class="info">
           <div class="name">${esc(m.name)}${parts}</div>
-          <div class="detail">塩 ${m.salt == null ? "不明" : fmt(m.salt) + "g"} ・ たんぱく ${m.prot == null ? "不明" : fmt(m.prot) + "g"} ・ ${fmt(m.kcal,0)}kcal</div>
+          <div class="detail">${catTag}塩 ${m.salt == null ? "不明" : fmt(m.salt) + "g"} ・ たんぱく ${m.prot == null ? "不明" : fmt(m.prot) + "g"} ・ ${fmt(m.kcal,0)}kcal</div>
         </div>
-        <button class="btn-add" data-add="${i}">追加</button>
-        <button class="btn-del" data-medit="${i}" title="編集">✎</button>
-        <button class="btn-del" data-mdel="${i}" title="削除">✕</button>
+        <button class="btn-add" data-add="${gi}">追加</button>
+        <button class="btn-del" data-medit="${gi}" title="編集">✎</button>
+        <button class="btn-del" data-mdel="${gi}" title="削除">✕</button>
       </div>`;
       }).join("");
 
@@ -897,10 +926,23 @@ function renderMenu() {
       saveMenu(); closeMenuEdit(); renderMenu();
     }));
 
+  // 絞り込み中も並べ替え可能: 表示中の項目だけを、元の位置の集合の中で並べ替える
   attachDrag($("menuList"), order => {
-    myMenu = order.map(i => myMenu[i]);
+    const globals = filtered.map(x => x.gi);            // 表示順のglobal index（昇順）
+    const items = order.map(slot => myMenu[globals[slot]]);
+    globals.forEach((pos, k) => { myMenu[pos] = items[k]; });
     saveMenu(); renderMenu();
   });
+}
+
+function renderEditCatChips() {
+  $("mCatChips").innerHTML = MENU_CATS.map(c =>
+    `<button class="chip${editCat === c ? " on" : ""}" data-mc="${c}">${c}</button>`).join("");
+  $("mCatChips").querySelectorAll(".chip").forEach(b =>
+    b.addEventListener("click", () => {
+      editCat = b.dataset.mc;
+      renderEditCatChips();
+    }));
 }
 
 function openMenuEdit(i) {
@@ -908,6 +950,8 @@ function openMenuEdit(i) {
   if (!m) return;
   menuEditIndex = i;
   $("mName").value = m.name;
+  editCat = normCat(m.cat);
+  renderEditCatChips();
   $("mKcal").value = m.kcal ?? ""; $("mProt").value = m.prot ?? "";
   $("mFat").value = m.fat ?? ""; $("mCarb").value = m.carb ?? "";
   $("mSalt").value = m.salt ?? ""; $("mG").value = m.g ?? "";
@@ -927,8 +971,10 @@ $("btnMenuEditSave").addEventListener("click", () => {
   const name = $("mName").value.trim();
   if (!name) { toast("名前を入力してください"); return; }
   const num = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
-  myMenu[menuEditIndex] = { name, g: num("mG"), kcal: num("mKcal"), prot: num("mProt"),
-                            fat: num("mFat"), carb: num("mCarb"), salt: num("mSalt") };
+  const prev = myMenu[menuEditIndex];
+  myMenu[menuEditIndex] = { name, cat: editCat, g: num("mG"), kcal: num("mKcal"), prot: num("mProt"),
+                            fat: num("mFat"), carb: num("mCarb"), salt: num("mSalt"),
+                            ...(Array.isArray(prev.items) ? { items: prev.items } : {}) };
   saveMenu(); closeMenuEdit(); renderMenu();
   toast("保存しました ✓");
 });

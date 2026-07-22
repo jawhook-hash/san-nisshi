@@ -281,17 +281,31 @@
       <div class="chips" id="menuFilterChips" style="margin:0 0 10px"></div>
       <div id="menuList"></div>
     </div>
+    <div class="card amount-panel" id="menuAmountCard" style="display:none">
+      <div class="selected-name" id="maName"></div>
+      <div class="note-help" id="maBaseNote"></div>
+      <div class="g-row">
+        <input type="number" id="maG" inputmode="decimal" min="1" max="2000">
+        <span class="unit">g</span>
+      </div>
+      <div class="preview" id="maPreview"></div>
+      <div class="btn-row">
+        <button class="btn-primary" id="btnMenuAmountAdd">記録に追加</button>
+        <button class="btn-secondary" id="btnMenuAmountCancel">やめる</button>
+      </div>
+    </div>
     <div class="card" id="menuEditCard" style="display:none">
       <h2>マイメニューの編集</h2>
       <div class="parse-grid">
         <div class="wide"><label>名前</label><input type="text" id="mName"></div>
         <div class="wide"><label>カテゴリ</label><div class="chips" id="mCatChips" style="margin:0"></div></div>
+        <div class="wide"><label>基準量（g・下の栄養値が「何g当たり」か。空欄なら「量」当たり）</label><input type="number" id="mBase" inputmode="decimal"></div>
         <div><label>エネルギー（kcal）</label><input type="number" id="mKcal" inputmode="decimal"></div>
         <div><label>たんぱく質（g）</label><input type="number" id="mProt" inputmode="decimal" step="0.1"></div>
         <div><label>脂質（g）</label><input type="number" id="mFat" inputmode="decimal" step="0.1"></div>
         <div><label>炭水化物（g）</label><input type="number" id="mCarb" inputmode="decimal" step="0.1"></div>
         <div><label>食塩相当量（g）</label><input type="number" id="mSalt" inputmode="decimal" step="0.1"></div>
-        <div><label>量（g・空欄可）</label><input type="number" id="mG" inputmode="decimal"></div>
+        <div><label>量（g・前回食べた量。空欄可）</label><input type="number" id="mG" inputmode="decimal"></div>
       </div>
       <div class="btn-row">
         <button class="btn-primary" id="btnMenuEditSave">保存</button>
@@ -423,7 +437,8 @@ const store = {
 const DEFAULT_SETTINGS = { salt: 6, prot: 60, kcal: 1900 };
 let settings = store.load("kd_settings", { ...DEFAULT_SETTINGS });
 let log = store.load("kd_log", {});        // { "YYYY-MM-DD": [entry, ...] }
-let myMenu = store.load("kd_mymenu", []);  // [ {name, g, kcal, prot, salt, k, p} ]
+let myMenu = store.load("kd_mymenu", []);  // [ {name, cat, base, g, kcal, prot, fat, carb, salt, items} ]
+                                           // base=基準量g（栄養値はbase当たり）。baseが無い旧データは「g当たり」とみなす
 let vitals = store.load("kd_vitals", {});  // { "YYYY-MM-DD": {w, sbp, dbp, egfr} }
 
 const saveLog = () => store.save("kd_log", log);
@@ -788,11 +803,13 @@ $("btnAdd").addEventListener("click", () => {
   if (!selectedFood) return;
   const g = parseFloat($("gInput").value);
   if (!g || g <= 0) { toast("量（g）を入力してください"); return; }
-  const e = calcEntry(selectedFood, g);
+  const f = selectedFood;
+  const e = calcEntry(f, g);
   addEntry(e);
   // マイメニューにも自動登録（同名は上書き。設定済みカテゴリは引き継がれる）
-  upsertMyMenu({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot,
-                 fat: e.fat, carb: e.carb, salt: e.salt });
+  // 成分表は100g当たりなので base=100 で生の値を保存し、g は今回食べた量（次回の既定値）
+  upsertMyMenu({ name: e.name, base: 100, g,
+                 kcal: f[2], prot: f[3], fat: f[4], carb: f[5], salt: f[6] });
   toastRecorded("記録し、マイメニューにも登録しました ⭐");
   $("amountPanel").style.display = "none";
   $("q").value = ""; $("hits").innerHTML = "";
@@ -859,7 +876,16 @@ $("btnScanAdd").addEventListener("click", () => {
   }
   addEntry(e);
   if ($("pName").value.trim()) {
-    upsertMyMenu({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot, fat: e.fat, carb: e.carb, salt: e.salt });
+    const num = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
+    const base = num("pBase");
+    // 基準量が有効ならパッケージ表示そのままの値（base当たり）を保存。無効なら換算後の値を従来形式で保存
+    if (base > 0) {
+      upsertMyMenu({ name: e.name, base, g: e.g,
+                     kcal: num("pKcal"), prot: num("pProt"), fat: num("pFat"),
+                     carb: num("pCarb"), salt: num("pSalt") });
+    } else {
+      upsertMyMenu({ name: e.name, g: e.g, kcal: e.kcal, prot: e.prot, fat: e.fat, carb: e.carb, salt: e.salt });
+    }
     toastRecorded("記録し、マイメニューにも登録しました ⭐");
   } else {
     toastRecorded("記録しました ✓");
@@ -875,7 +901,17 @@ let editCat = "その他";
 
 const normCat = c => MENU_CATS.includes(c) ? c : "その他";
 
+// 基準量（base、無ければ登録時の量g）当たりの栄養値を、量gに換算した記録エントリを作る
+function menuPortion(m, g) {
+  const ref = m.base ?? m.g;
+  const factor = (ref > 0 && g > 0) ? g / ref : 1;
+  const mul = v => v == null ? null : Math.round(v * factor * 100) / 100;
+  return { name: m.name, g: g ?? m.g,
+           kcal: mul(m.kcal), prot: mul(m.prot), fat: mul(m.fat), carb: mul(m.carb), salt: mul(m.salt) };
+}
+
 function renderMenu() {
+  closeMenuAmount();
   // カテゴリ絞り込みチップ（件数付き）
   const counts = {};
   MENU_CATS.forEach(c => counts[c] = 0);
@@ -901,12 +937,13 @@ function renderMenu() {
     : filtered.map(({ m, gi }) => {
         const parts = Array.isArray(m.items) && m.items.length ? `（内訳${m.items.length}品）` : "";
         const catTag = menuFilter === "すべて" && normCat(m.cat) !== "その他" ? `${normCat(m.cat)} ・ ` : "";
+        const d = menuPortion(m, m.g ?? m.base);   // 既定の量（前回の量）に換算して表示
         return `
       <div class="drag-row menu-item">
         <span class="drag-handle">⠿</span>
         <div class="info">
           <div class="name">${esc(m.name)}${parts}</div>
-          <div class="detail">${catTag}塩 ${m.salt == null ? "不明" : fmt(m.salt) + "g"} ・ たんぱく ${m.prot == null ? "不明" : fmt(m.prot) + "g"} ・ ${fmt(m.kcal,0)}kcal</div>
+          <div class="detail">${catTag}${d.g ? fmt(d.g,0) + "g ・ " : ""}塩 ${d.salt == null ? "不明" : fmt(d.salt) + "g"} ・ たんぱく ${d.prot == null ? "不明" : fmt(d.prot) + "g"} ・ ${fmt(d.kcal,0)}kcal</div>
         </div>
         <button class="btn-add" data-add="${gi}">追加</button>
         <button class="btn-del" data-medit="${gi}" title="編集">✎</button>
@@ -915,11 +952,7 @@ function renderMenu() {
       }).join("");
 
   $("menuList").querySelectorAll("[data-add]").forEach(b =>
-    b.addEventListener("click", () => {
-      const m = myMenu[+b.dataset.add];
-      addEntry(structuredClone(m));
-      toastRecorded(`「${m.name}」を記録しました ✓`);
-    }));
+    b.addEventListener("click", () => openMenuAmount(+b.dataset.add)));
   $("menuList").querySelectorAll("[data-medit]").forEach(b =>
     b.addEventListener("click", () => openMenuEdit(+b.dataset.medit)));
   $("menuList").querySelectorAll("[data-mdel]").forEach(b =>
@@ -939,6 +972,61 @@ function renderMenu() {
   });
 }
 
+/* --- マイメニューからの量指定追加 --- */
+let menuAddIndex = null;
+
+function closeMenuAmount() {
+  menuAddIndex = null;
+  $("menuAmountCard").style.display = "none";
+}
+
+function openMenuAmount(gi) {
+  const m = myMenu[gi];
+  if (!m) return;
+  const ref = m.base ?? m.g;
+  // まとめ品（内訳あり）と量の基準が無い項目は、従来どおりそのままの値で追加
+  if ((Array.isArray(m.items) && m.items.length) || !(ref > 0)) {
+    addEntry(structuredClone(m));
+    toastRecorded(`「${m.name}」を記録しました ✓`);
+    return;
+  }
+  closeMenuEdit();
+  menuAddIndex = gi;
+  $("maName").textContent = m.name;
+  $("maBaseNote").textContent = m.base
+    ? `基準量 ${fmt(m.base, 0)}g 当たりの成分から、食べた量（g）で換算します`
+    : `登録時の量 ${fmt(m.g, 0)}g の成分から、食べた量（g）で換算します`;
+  $("maG").value = m.g ?? m.base;
+  updateMenuAmountPreview();
+  $("menuAmountCard").style.display = "";
+  $("menuAmountCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function updateMenuAmountPreview() {
+  const m = myMenu[menuAddIndex];
+  if (!m) return;
+  const g = parseFloat($("maG").value) || 0;
+  const e = menuPortion(m, g);
+  $("maPreview").innerHTML =
+    `この量で: 塩 <b>${e.salt == null ? "不明" : fmt(e.salt) + "g"}</b> ・ ` +
+    `たんぱく <b>${e.prot == null ? "不明" : fmt(e.prot) + "g"}</b> ・ <b>${fmt(e.kcal,0)}kcal</b>` +
+    `<br>脂質 ${fmt(e.fat)}g ・ 炭水化物 ${fmt(e.carb)}g`;
+}
+$("maG").addEventListener("input", updateMenuAmountPreview);
+$("btnMenuAmountCancel").addEventListener("click", closeMenuAmount);
+
+$("btnMenuAmountAdd").addEventListener("click", () => {
+  const m = myMenu[menuAddIndex];
+  if (!m) return;
+  const g = parseFloat($("maG").value);
+  if (!g || g <= 0) { toast("量（g）を入力してください"); return; }
+  addEntry(menuPortion(m, g));
+  m.g = g;                       // 今回の量を次回の既定値として覚える
+  saveMenu();
+  toastRecorded(`「${m.name}」を記録しました ✓`);
+  renderMenu();                  // closeMenuAmountも兼ねる
+});
+
 function renderEditCatChips() {
   $("mCatChips").innerHTML = MENU_CATS.map(c =>
     `<button class="chip${editCat === c ? " on" : ""}" data-mc="${c}">${c}</button>`).join("");
@@ -952,10 +1040,12 @@ function renderEditCatChips() {
 function openMenuEdit(i) {
   const m = myMenu[i];
   if (!m) return;
+  closeMenuAmount();
   menuEditIndex = i;
   $("mName").value = m.name;
   editCat = normCat(m.cat);
   renderEditCatChips();
+  $("mBase").value = m.base ?? "";
   $("mKcal").value = m.kcal ?? ""; $("mProt").value = m.prot ?? "";
   $("mFat").value = m.fat ?? ""; $("mCarb").value = m.carb ?? "";
   $("mSalt").value = m.salt ?? ""; $("mG").value = m.g ?? "";
@@ -976,7 +1066,9 @@ $("btnMenuEditSave").addEventListener("click", () => {
   if (!name) { toast("名前を入力してください"); return; }
   const num = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
   const prev = myMenu[menuEditIndex];
-  myMenu[menuEditIndex] = { name, cat: editCat, g: num("mG"), kcal: num("mKcal"), prot: num("mProt"),
+  const base = num("mBase");
+  myMenu[menuEditIndex] = { name, cat: editCat, base: base > 0 ? base : null,
+                            g: num("mG"), kcal: num("mKcal"), prot: num("mProt"),
                             fat: num("mFat"), carb: num("mCarb"), salt: num("mSalt"),
                             ...(Array.isArray(prev.items) ? { items: prev.items } : {}) };
   saveMenu(); closeMenuEdit(); renderMenu();

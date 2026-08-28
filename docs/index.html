@@ -860,11 +860,17 @@ function resetScanPanel() {
   $("scanPanel").style.display = "none";
 }
 
-// 同名があれば上書き（設定済みカテゴリは引き継ぐ）、なければ追加
+// 同名があれば成分を上書き（設定済みカテゴリと既定量は引き継ぐ）、なければ追加
 function upsertMyMenu(item) {
   const i = myMenu.findIndex(m => m.name === item.name);
-  if (i >= 0) myMenu[i] = { ...(myMenu[i].cat ? { cat: myMenu[i].cat } : {}), ...item };
-  else myMenu.push(item);
+  if (i >= 0) {
+    const prev = myMenu[i];
+    myMenu[i] = { ...item,
+                  ...(prev.cat ? { cat: prev.cat } : {}),
+                  ...(prev.g != null ? { g: prev.g } : {}) };
+  } else {
+    myMenu.push(item);
+  }
   saveMenu();
 }
 
@@ -1021,8 +1027,8 @@ $("btnMenuAmountAdd").addEventListener("click", () => {
   const g = parseFloat($("maG").value);
   if (!g || g <= 0) { toast("量（g）を入力してください"); return; }
   addEntry(menuPortion(m, g));
-  m.g = g;                       // 今回の量を次回の既定値として覚える
-  saveMenu();
+  // マイメニュー側の登録内容（既定量・成分の基準量）は変更しない。
+  // 既定量を変えたいときは「マイメニューの編集」から。
   toastRecorded(`「${m.name}」を記録しました ✓`);
   renderMenu();                  // closeMenuAmountも兼ねる
 });
